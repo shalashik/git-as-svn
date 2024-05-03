@@ -37,7 +37,7 @@ class GitLabMappingConfig private constructor(var path: String, var createMode: 
         val api = gitlab.connect()
         // Get repositories.
         val mapping = GitLabMapping(context, this, gitlab)
-        for (project in api.projects) mapping.updateRepository(project)
+        for (project in api.getProjectApi().getProjects()) mapping.updateRepository(project)
         val init = Consumer { repository: GitLabProject ->
             try {
                 repository.initRevisions()

@@ -7,7 +7,7 @@
  */
 package svnserver.ext.gitlab.auth
 
-import org.gitlab.api.TokenType
+import org.gitlab4j.api.Constants.TokenType
 import svnserver.auth.UserDB
 import svnserver.config.UserDBConfig
 import svnserver.context.SharedContext
@@ -35,12 +35,12 @@ enum class GitlabAuthentication {
     },
     AccessToken {
         override fun obtainAccessToken(gitLabUrl: String, username: String, password: String): GitLabToken {
-            return GitLabToken(TokenType.ACCESS_TOKEN, password)
+            return GitLabToken(TokenType.ACCESS, password)
         }
     },
     PrivateToken {
         override fun obtainAccessToken(gitLabUrl: String, username: String, password: String): GitLabToken {
-            return GitLabToken(TokenType.PRIVATE_TOKEN, password)
+            return GitLabToken(TokenType.PRIVATE, password)
         }
     };
 

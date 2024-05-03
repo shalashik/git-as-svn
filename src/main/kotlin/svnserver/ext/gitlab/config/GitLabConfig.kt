@@ -7,7 +7,8 @@
  */
 package svnserver.ext.gitlab.config
 
-import org.gitlab.api.TokenType
+import org.gitlab4j.api.GitLabApi.ApiVersion
+import org.gitlab4j.api.Constants.TokenType
 import ru.bozaro.gitlfs.client.auth.AuthProvider
 import ru.bozaro.gitlfs.client.auth.BasicAuthProvider
 import svnserver.auth.User
@@ -34,7 +35,7 @@ class GitLabConfig private constructor(var url: String, private var tokenType: T
     var gitalyToken = "secret token"
     var glProtocol: GLProtocol = GLProtocol.Web
 
-    constructor() : this("http://localhost/", TokenType.PRIVATE_TOKEN, "")
+    constructor() : this("http://localhost/", TokenType.PRIVATE, "")
     constructor(url: String, token: GitLabToken) : this(url, token.type, token.value)
 
     override fun create(context: SharedContext) {

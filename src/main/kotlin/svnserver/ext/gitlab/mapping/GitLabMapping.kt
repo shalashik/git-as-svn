@@ -13,9 +13,10 @@ import jakarta.servlet.http.HttpServlet
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.eclipse.jgit.util.StringUtils
-import org.gitlab.api.GitlabAPI
-import org.gitlab.api.GitlabAPIException
-import org.gitlab.api.models.GitlabProject
+import org.gitlab4j.api.GitLabApi
+import org.gitlab4j.api.GitLabApiException
+import org.gitlab4j.api.SystemHooksApi
+import org.gitlab4j.api.models.Project
 import org.tmatesoft.svn.core.SVNException
 import svnserver.Loggers
 import svnserver.StringHelper
@@ -23,6 +24,7 @@ import svnserver.config.ConfigHelper
 import svnserver.context.LocalContext
 import svnserver.context.SharedContext
 import svnserver.ext.gitlab.config.GitLabContext
+import svnserver.ext.gitlab.mapping.GitLabProject
 import svnserver.ext.web.server.WebServer
 import svnserver.repository.RepositoryMapping
 import svnserver.repository.VcsAccess
@@ -46,7 +48,7 @@ internal class GitLabMapping(private val context: SharedContext, private val con
     override val mapping: NavigableMap<String, GitLabProject> = ConcurrentSkipListMap()
 
     @Throws(IOException::class)
-    fun updateRepository(project: GitlabProject): GitLabProject? {
+    fun updateRepository(project: Project): GitLabProject? {
         val branches = getBranchesToExpose(project)
         if (branches.isEmpty()) {
             removeRepository(project.id, project.pathWithNamespace)
@@ -79,7 +81,7 @@ internal class GitLabMapping(private val context: SharedContext, private val con
         } else null
     }
 
-    private fun removeRepository(projectId: Int, projectName: String) {
+    private fun removeRepository(projectId: Long, projectName: String) {
         val projectKey = StringHelper.normalizeDir(projectName)
         val project = mapping[projectKey]
         if (project != null && project.projectId == projectId) {
@@ -100,10 +102,10 @@ internal class GitLabMapping(private val context: SharedContext, private val con
         webServer.addServlet(if (StringUtils.isEmptyOrNull(path)) "/" else path, GitLabHookServlet())
         try {
             if (!isHookInstalled(api, hookUrl.toString())) {
-                api.addSystemHook(hookUrl.toString())
+                api.getSystemHooksApi().addSystemHook(hookUrl.toString(), "git-as-svn", false, false, false);
             }
-        } catch (e: GitlabAPIException) {
-            if (e.responseCode == HttpURLConnection.HTTP_FORBIDDEN) {
+        } catch (e: GitLabApiException) {
+            if (e.getHttpStatus() == HttpURLConnection.HTTP_FORBIDDEN) {
                 log.warn("Unable to install gitlab hook {}: {}", hookUrl, e.message)
             } else {
                 throw e
@@ -112,14 +114,8 @@ internal class GitLabMapping(private val context: SharedContext, private val con
     }
 
     @Throws(IOException::class)
-    private fun isHookInstalled(api: GitlabAPI, hookUrl: String): Boolean {
-        val hooks = api.systemHooks
-        for (hook in hooks) {
-            if (hook.url == hookUrl) {
-                return true
-            }
-        }
-        return false
+    private fun isHookInstalled(api: GitLabApi, hookUrl: String): Boolean {
+        return api.getSystemHooksApi().getSystemHooks().any{ it.getUrl() == hookUrl }
     }
 
     private inner class GitLabHookServlet : HttpServlet() {
@@ -143,7 +139,7 @@ internal class GitLabMapping(private val context: SharedContext, private val con
                             return
                         }
                         val api = gitLabContext.connect()
-                        val project = updateRepository(api.getProject(event.projectId))
+                        val project = updateRepository(api.getProjectApi().getProject(event.projectId))
                         if (project != null) {
                             log.info(event.eventName + " event happened, init project revisions ...")
                             project.initRevisions()
@@ -188,9 +184,9 @@ internal class GitLabMapping(private val context: SharedContext, private val con
         private const val tagPrefix = "git-as-svn:"
         private val log = Loggers.gitlab
         private const val HASHED_PATH = "@hashed"
-        private fun getBranchesToExpose(project: GitlabProject): Set<String> {
+        private fun getBranchesToExpose(project: Project): Set<String> {
             val result = TreeSet<String>()
-            for (tag in project.tagList) {
+            for (tag in project.getTagList()) {
                 if (!tag.startsWith(tagPrefix)) continue
                 val branch = tag.substring(tagPrefix.length)
                 if (branch.isEmpty()) continue

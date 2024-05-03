@@ -9,14 +9,17 @@ package svnserver.ext.gitlab.config
 
 import com.google.api.client.auth.oauth.OAuthGetAccessToken
 import com.google.api.client.auth.oauth2.PasswordTokenRequest
+import com.google.api.client.auth.oauth2.TokenRequest
 import com.google.api.client.auth.oauth2.TokenResponseException
 import com.google.api.client.http.HttpTransport
 import com.google.api.client.http.javanet.NetHttpTransport
-import com.google.api.client.json.jackson2.JacksonFactory
-import org.gitlab.api.GitlabAPI
-import org.gitlab.api.GitlabAPIException
-import org.gitlab.api.TokenType
-import org.gitlab.api.models.GitlabSession
+import com.google.api.client.json.gson.GsonFactory
+import org.gitlab4j.api.Constants.TokenType
+import org.gitlab4j.api.GitLabApi
+import org.gitlab4j.api.GitLabApi.ApiVersion
+import org.gitlab4j.api.GitLabApiException
+import org.gitlab4j.api.utils.AccessTokenUtils
+import org.gitlab4j.api.utils.AccessTokenUtils.Scope
 import svnserver.context.Shared
 import svnserver.context.SharedContext
 import java.io.IOException
@@ -29,13 +32,13 @@ import java.net.HttpURLConnection
  */
 class GitLabContext internal constructor(val config: GitLabConfig) : Shared {
     @Throws(IOException::class)
-    fun connect(username: String, password: String): GitlabSession {
+    fun connect(username: String, password: String): GitLabApi {
         val token = obtainAccessToken(gitLabUrl, username, password, false)
         val api = connect(gitLabUrl, token)
-        return api.currentSession
+        return api
     }
 
-    fun connect(): GitlabAPI {
+    fun connect(): GitLabApi {
         return Companion.connect(gitLabUrl, token)
     }
 
@@ -56,21 +59,25 @@ class GitLabContext internal constructor(val config: GitLabConfig) : Shared {
         fun obtainAccessToken(gitlabUrl: String, username: String, password: String, sudoScope: Boolean): GitLabToken {
             return try {
                 val tokenServerUrl = OAuthGetAccessToken(gitlabUrl + "/oauth/token?scope=api" + if (sudoScope) "%20sudo" else "")
-                val oauthResponse = PasswordTokenRequest(transport, JacksonFactory.getDefaultInstance(), tokenServerUrl, username, password).execute()
-                GitLabToken(TokenType.ACCESS_TOKEN, oauthResponse.accessToken)
+                val oauthResponse = PasswordTokenRequest(transport, GsonFactory.getDefaultInstance(), tokenServerUrl, username, password).execute()
+                GitLabToken(TokenType.OAUTH2_ACCESS, oauthResponse.accessToken)
             } catch (e: TokenResponseException) {
                 if (sudoScope && e.statusCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
                     // Fallback for pre-10.2 gitlab versions
-                    val session = GitlabAPI.connect(gitlabUrl, username, password)
-                    GitLabToken(TokenType.PRIVATE_TOKEN, session.privateToken)
+                    val tokenServerUrl = OAuthGetAccessToken(gitlabUrl + "/api/v3/session")
+                    val oauthResponse = TokenRequest(transport, GsonFactory.getDefaultInstance(), tokenServerUrl, "password")
+                        .set("login", username)
+                        .set("password", password)
+                        .execute()
+                    GitLabToken(TokenType.PRIVATE, oauthResponse.get("private_token").toString())
                 } else {
-                    throw GitlabAPIException(e.message, e.statusCode, e)
+                    throw GitLabApiException(e.message, e.statusCode)
                 }
             }
         }
 
-        fun connect(gitlabUrl: String, token: GitLabToken): GitlabAPI {
-            return GitlabAPI.connect(gitlabUrl, token.value, token.type)
+        fun connect(gitlabUrl: String, token: GitLabToken): GitLabApi {
+            return GitLabApi(gitlabUrl, token.type, token.value)
         }
     }
 }

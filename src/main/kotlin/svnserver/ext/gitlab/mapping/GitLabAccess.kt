@@ -7,10 +7,12 @@
  */
 package svnserver.ext.gitlab.mapping
 
-import org.gitlab.api.GitlabAPI
-import org.gitlab.api.models.GitlabAccessLevel
-import org.gitlab.api.models.GitlabProject
-import org.gitlab.api.models.GitlabUser
+import org.gitlab4j.api.GitLabApi
+import org.gitlab4j.api.ProjectApi
+import org.gitlab4j.api.GitLabApiException
+import org.gitlab4j.api.models.AccessLevel
+import org.gitlab4j.api.models.Project
+import org.gitlab4j.api.models.Owner
 import org.mapdb.HTreeMap
 import org.mapdb.Serializer
 import ru.bozaro.gitlfs.common.JsonHelper
@@ -26,16 +28,17 @@ import java.io.Serializable
 import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.TimeUnit
+import java.net.HttpURLConnection
 
-private class GitlabUserCache(user: GitlabUser) : Serializable {
-    val id: Int? = user.id
-    val name: String? = user.name
+private class GitlabUserCache(user: Owner) : Serializable {
+    val id: Long? = user.getId()
+    val name: String? = user.getName()
 }
 
-private class GitlabProjectCache(project: GitlabProject) : Serializable {
-    val projectAccess: GitlabAccessLevel? = project.permissions?.projectAccess?.accessLevel
-    val projectGroupAccess: GitlabAccessLevel? = project.permissions?.projectGroupAccess?.accessLevel
-    val owner: GitlabUserCache? = if (project.owner == null) null else GitlabUserCache(project.owner)
+private class GitlabProjectCache(project: Project) : Serializable {
+    val projectAccess: AccessLevel? = project.getPermissions()?.getProjectAccess()?.getAccessLevel()
+    val projectGroupAccess: AccessLevel? = project.getPermissions()?.getGroupAccess()?.getAccessLevel()
+    val owner: GitlabUserCache? = if (project.getOwner() == null) null else GitlabUserCache(project.getOwner())
 }
 
 /**
@@ -44,7 +47,7 @@ private class GitlabProjectCache(project: GitlabProject) : Serializable {
  * @author Artem V. Navrotskiy <bozaro@users.noreply.github.com>
  * @author Marat Radchenko <marat@slonopotamus.org>
  */
-internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, private val gitlabProject: GitlabProject, private val relativeRepoPath: Path, private val gitlabContext: GitLabContext) : VcsAccess {
+internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, private val gitlabProject: Project, private val relativeRepoPath: Path, private val gitlabContext: GitLabContext) : VcsAccess {
     private val cache = local.shared.cacheDB.hashMap("gitlab.projectAccess.${gitlabProject.id}", Serializer.STRING, Serializer.JAVA)
         .expireAfterCreate(config.cacheTimeSec, TimeUnit.SECONDS)
         .expireAfterUpdate(config.cacheTimeSec, TimeUnit.SECONDS)
@@ -60,9 +63,8 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
     override fun canWrite(user: User, branch: String, path: String): Boolean {
         if (user.isAnonymous) return false
         val project = getProjectViaSudo(user) ?: return false
-        if (isProjectOwner(project, user)) return true
-        return hasAccess(project.projectAccess, GitlabAccessLevel.Developer)
-                || hasAccess(project.projectGroupAccess, GitlabAccessLevel.Developer)
+        return hasAccess(project.projectAccess, AccessLevel.DEVELOPER)
+                || hasAccess(project.projectGroupAccess, AccessLevel.DEVELOPER)
     }
 
     @Throws(IOException::class)
@@ -113,19 +115,11 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
         environment["GL_REPOSITORY"] = glRepository
     }
 
-    private fun isProjectOwner(project: GitlabProjectCache, user: User): Boolean {
-        if (user.isAnonymous) {
-            return false
-        }
-        val owner = project.owner ?: return false
-        return owner.id.toString() == user.externalId || owner.name == user.username
+    private fun hasAccess(access: AccessLevel?, level: AccessLevel): Boolean {
+        return access != null && access >= level
     }
 
-    private fun hasAccess(access: GitlabAccessLevel?, level: GitlabAccessLevel): Boolean {
-        return access != null && access.accessValue >= level.accessValue
-    }
-
-    @Throws(IOException::class)
+    @Throws(GitLabApiException::class)
     private fun getProjectViaSudo(user: User): GitlabProjectCache? {
         val key = if (user.isAnonymous) {
             ""
@@ -134,20 +128,23 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
             check(id.isNotEmpty()) { "Found user without identificator: $user" }
             id
         }
-
         return cache.computeIfAbsent(key) { userId ->
             try {
                 val result = if (userId.isEmpty()) {
-                    GitlabAPI.connect(gitlabContext.gitLabUrl, null).getProject(gitlabProject.id)
+                    GitLabApi(gitlabContext.gitLabUrl, null).getProjectApi().getProject(gitlabProject.id)
                 } else {
                     val api = gitlabContext.connect()
-                    val tailUrl = GitlabProject.URL + "/" + gitlabProject.id + "?sudo=" + userId
-                    api.retrieve().to(tailUrl, GitlabProject::class.java)
+                    api.sudo(user.username)
+                    api.getProjectApi().getProject(gitlabProject.id)
                 }
                 SerializableOptional(GitlabProjectCache(result))
-            } catch (e: FileNotFoundException) {
-                SerializableOptional(null)
-            }
+            } catch (e: GitLabApiException) {
+                if (e.getHttpStatus() == HttpURLConnection.HTTP_NOT_FOUND) {
+                    SerializableOptional(null)
+                } else {
+                    throw e
+                }
+            } 
         }.value
     }
 }

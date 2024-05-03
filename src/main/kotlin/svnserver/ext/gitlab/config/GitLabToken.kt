@@ -7,6 +7,6 @@
  */
 package svnserver.ext.gitlab.config
 
-import org.gitlab.api.TokenType
+import org.gitlab4j.api.Constants.TokenType
 
 class GitLabToken(val type: TokenType, val value: String)

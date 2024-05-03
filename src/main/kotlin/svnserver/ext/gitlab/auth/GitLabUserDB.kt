@@ -7,9 +7,9 @@
  */
 package svnserver.ext.gitlab.auth
 
-import org.gitlab.api.GitlabAPI
-import org.gitlab.api.GitlabAPIException
-import org.gitlab.api.models.GitlabUser
+import org.gitlab4j.api.GitLabApi
+import org.gitlab4j.api.GitLabApiException
+import org.gitlab4j.api.models.User as GitLabUser
 import svnserver.Loggers
 import svnserver.UserType
 import svnserver.auth.Authenticator
@@ -37,18 +37,17 @@ class GitLabUserDB(private val config: GitLabUserDBConfig, context: SharedContex
     override fun check(username: String, password: String): User? {
         return try {
             val token: GitLabToken = config.authentication.obtainAccessToken(context.gitLabUrl, username, password)
-            val api: GitlabAPI = GitLabContext.connect(context.gitLabUrl, token)
-            val session = api.currentSession
-            if (session.username == username) {
-                createUser(session, password)
+            val session: GitLabApi = GitLabContext.connect(context.gitLabUrl, token)
+            if (session.getUserApi().getCurrentUser().getUsername() == username) {
+                createUser(session.getUserApi().getCurrentUser(), password)
             } else {
                 // This can happen when user authenticates using access token (so username is not used) but enters wrong username.
                 // While we properly calculate username, svn *client* thinks that their username is what user has entered.
-                log.warn("User password check error: expected username=${session.username} but got username=$username")
+                log.warn("User password check error: expected username=${session.getUserApi().getCurrentUser().getUsername()} but got username=$username")
                 null
             }
-        } catch (e: GitlabAPIException) {
-            if (e.responseCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
+        } catch (e: GitLabApiException) {
+            if (e.getHttpStatus() == HttpURLConnection.HTTP_UNAUTHORIZED) {
                 return null
             }
             log.warn("User password check error: $username", e)
@@ -59,13 +58,15 @@ class GitLabUserDB(private val config: GitLabUserDBConfig, context: SharedContex
         }
     }
 
-    private fun createUser(user: GitlabUser, password: String?): User {
-        return User.create(user.username, user.name, user.email, user.id.toString(), UserType.GitLab, if (password == null) null else LfsCredentials(user.username, password))
+    private fun createUser(user: GitLabUser, password: String?): User {
+        return User.create(user.getUsername() , user.getName(), user.getEmail(), user.getId().toString(), UserType.GitLab, if (password == null) null else LfsCredentials(user.getUsername(), password))
     }
 
     override fun lookupByUserName(username: String): User? {
         return try {
-            createUser(context.connect().getUserViaSudo(username), null)
+            val api = context.connect()
+            api.sudo(username)
+            createUser(api.getUserApi().getCurrentUser(), null)
         } catch (e: FileNotFoundException) {
             null
         } catch (e: IOException) {
@@ -78,7 +79,7 @@ class GitLabUserDB(private val config: GitLabUserDBConfig, context: SharedContex
         val userId = removePrefix(external, PREFIX_USER)
         if (userId != null) {
             return try {
-                createUser(context.connect().getUser(userId), null)
+                createUser(context.connect().getUserApi().getUser(userId), null)
             } catch (e: FileNotFoundException) {
                 null
             } catch (e: IOException) {
@@ -89,7 +90,8 @@ class GitLabUserDB(private val config: GitLabUserDBConfig, context: SharedContex
         val keyId = removePrefix(external, PREFIX_KEY)
         return if (keyId != null) {
             try {
-                createUser(context.connect().getSSHKey(keyId).user, null)
+                val userApi = context.connect().getUserApi()
+                createUser(userApi.getUser(userApi.getSshKey(keyId).getUserId()), null)
             } catch (e: FileNotFoundException) {
                 null
             } catch (e: IOException) {
@@ -99,9 +101,9 @@ class GitLabUserDB(private val config: GitLabUserDBConfig, context: SharedContex
         } else null
     }
 
-    private fun removePrefix(glId: String, prefix: String): Int? {
+    private fun removePrefix(glId: String, prefix: String): Long? {
         if (glId.startsWith(prefix)) {
-            var result = 0
+            var result: Long = 0
             for (i in prefix.length until glId.length) {
                 val c = glId[i]
                 if (c < '0' || c > '9') return null

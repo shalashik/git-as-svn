@@ -77,6 +77,7 @@ tasks.getByName<JavaExec>("run") {
 }
 
 dependencies {
+    implementation("commons-io:commons-io:2.16.1")
     implementation("org.bouncycastle:bcpkix-jdk15on:1.70")
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.9.0.202403050737-r")
     implementation("org.tmatesoft.svnkit:svnkit:1.10.11")
@@ -87,6 +88,7 @@ dependencies {
     implementation("com.unboundid:unboundid-ldapsdk:7.0.0")
     implementation("org.eclipse.jetty:jetty-servlet:11.0.20")
     implementation("org.gitlab:java-gitlab-api:4.1.1")
+    implementation("org.gitlab4j:gitlab4j-api:5.5.0")
     implementation("org.bitbucket.b_c:jose4j:0.9.6")
     implementation("com.github.zeripath:java-gitea-api:1.18.0")
 
@@ -96,7 +98,7 @@ dependencies {
     implementation("ru.bozaro.gitlfs:gitlfs-server:$gitLfsJava")
 
     implementation("com.google.oauth-client:google-oauth-client:1.35.0")
-    implementation("com.google.http-client:google-http-client-jackson2:1.44.1")
+    implementation("com.google.http-client:google-http-client-gson:1.43.2")
     implementation("org.slf4j:slf4j-api") {
         version {
             strictly("1.8.0-beta4")
