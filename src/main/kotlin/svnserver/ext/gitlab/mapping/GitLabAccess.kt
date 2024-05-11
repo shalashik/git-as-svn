@@ -29,6 +29,9 @@ import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.TimeUnit
 import java.net.HttpURLConnection
+import org.slf4j.Logger
+import java.util.logging.Level
+import svnserver.Loggers
 
 private class GitlabUserCache(user: Owner) : Serializable {
     val id: Long? = user.getId()
@@ -48,7 +51,7 @@ private class GitlabProjectCache(project: Project) : Serializable {
  * @author Marat Radchenko <marat@slonopotamus.org>
  */
 internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, private val gitlabProject: Project, private val relativeRepoPath: Path, private val gitlabContext: GitLabContext) : VcsAccess {
-    private val cache = local.shared.cacheDB.hashMap("gitlab.projectAccess.${gitlabProject.id}", Serializer.STRING, Serializer.JAVA)
+    private val cache = local.shared.cacheDB.hashMap("gitlab.projectAccess.${gitlabProject.getId()}", Serializer.STRING, Serializer.JAVA)
         .expireAfterCreate(config.cacheTimeSec, TimeUnit.SECONDS)
         .expireAfterUpdate(config.cacheTimeSec, TimeUnit.SECONDS)
         .expireMaxSize(config.cacheMaximumSize)
@@ -69,7 +72,7 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
 
     @Throws(IOException::class)
     override fun updateEnvironment(environment: MutableMap<String, String>, user: User) {
-        val glRepository = String.format("project-%s", gitlabProject.id)
+        val glRepository = String.format("project-%s", gitlabProject.getId())
         val glProtocol = gitlabContext.config.glProtocol.name.lowercase()
         val userId: String? = if (user.externalId == null) null else GitLabUserDB.PREFIX_USER + user.externalId
 
@@ -77,7 +80,7 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
         gitalyRepo["storageName"] = "default"
         gitalyRepo["glRepository"] = glRepository
         gitalyRepo["relativePath"] = relativeRepoPath.toString()
-        gitalyRepo["glProjectPath"] = gitlabProject.pathWithNamespace
+        gitalyRepo["glProjectPath"] = gitlabProject.getPathWithNamespace()
         val gitalyRepoString = JsonHelper.mapper.writeValueAsString(gitalyRepo)
 
         val userDetails = HashMap<String, Any>()
@@ -86,12 +89,16 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
         userDetails["username"] = user.username
         userDetails["protocol"] = glProtocol
 
+        val log: Logger = Loggers.git
+        log.info("PROJECT:")
+        log.info(gitlabProject.toString())
         val hooksPayload = HashMap<String, Any>()
         hooksPayload["binary_directory"] = gitlabContext.config.gitalyBinDir
         hooksPayload["internal_socket"] = gitlabContext.config.gitalySocket
         hooksPayload["internal_socket_token"] = gitlabContext.config.gitalyToken
         hooksPayload["repository"] = gitalyRepoString
         hooksPayload["receive_hooks_payload"] = userDetails
+        hooksPayload["object_format"] = JsonHelper.mapper.readTree(gitlabProject.toString()).get("repository_object_format")
         hooksPayload["user_details"] = userDetails
 
         /*
@@ -131,11 +138,11 @@ internal class GitLabAccess(local: LocalContext, config: GitLabMappingConfig, pr
         return cache.computeIfAbsent(key) { userId ->
             try {
                 val result = if (userId.isEmpty()) {
-                    GitLabApi(gitlabContext.gitLabUrl, null).getProjectApi().getProject(gitlabProject.id)
+                    GitLabApi(gitlabContext.gitLabUrl, null).getProjectApi().getProject(gitlabProject.getId())
                 } else {
                     val api = gitlabContext.connect()
                     api.sudo(user.username)
-                    api.getProjectApi().getProject(gitlabProject.id)
+                    api.getProjectApi().getProject(gitlabProject.getId())
                 }
                 SerializableOptional(GitlabProjectCache(result))
             } catch (e: GitLabApiException) {
